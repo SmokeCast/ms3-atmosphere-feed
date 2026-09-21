@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from urllib.request import urlopen
 from urllib.error import HTTPError, URLError
 from contextlib import asynccontextmanager
@@ -108,6 +109,40 @@ def get_all_weather(
             "count": len(docs),
             "data": docs
         }
+    except PyMongoError:
+        raise HTTPException(status_code=503, detail="No se pudo consultar MongoDB")
+
+
+@app.get("/api/weather/overview", tags=["Clima"])
+def weather_overview(
+    limit: int = Query(default=48, ge=1, le=500),
+    skip: int = Query(default=0, ge=0),
+    country: str = Query(default="", max_length=80),
+    city: str = Query(default="", max_length=120),
+):
+    """Última lectura por localidad, filtros y paginación sobre localidades únicas."""
+    match = {}
+    if country.strip():
+        match["city_country"] = country.strip()
+    if city.strip():
+        match["city_name"] = {"$regex": re.escape(city.strip()), "$options": "i"}
+    filtered = [{"$match": match}] if match else []
+    pipeline = [
+        {"$sort": {"city_id": 1, "timestamp": -1, "_id": -1}},
+        {"$group": {"_id": "$city_id", "reading": {"$first": "$$ROOT"}}},
+        {"$replaceRoot": {"newRoot": "$reading"}},
+        {"$facet": {
+            "data": filtered + [{"$sort": {"city_name": 1, "city_id": 1}},
+                                 {"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 0}}],
+            "total": filtered + [{"$count": "value"}],
+            "countries": [{"$group": {"_id": "$city_country"}}, {"$sort": {"_id": 1}}],
+        }},
+    ]
+    try:
+        result = next(iter(collection.aggregate(pipeline, allowDiskUse=True)), {})
+        total = result.get("total", [])
+        return {"data": result.get("data", []), "total": total[0]["value"] if total else 0,
+                "countries": [c["_id"] for c in result.get("countries", []) if c.get("_id")]}
     except PyMongoError:
         raise HTTPException(status_code=503, detail="No se pudo consultar MongoDB")
 

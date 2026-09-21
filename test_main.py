@@ -54,6 +54,31 @@ class WeatherTests(unittest.TestCase):
             collection.find_one.return_value = None
             self.assertEqual(self.api.get('/api/weather/latest?city_id=1').status_code, 404)
 
+    def test_overview_groups_before_filtering_and_paging(self):
+        reading = {'city_id': 7, 'city_name': 'Lima', 'city_country': 'Perú'}
+        with patch.object(main, 'collection') as collection:
+            collection.aggregate.return_value = iter([{'data': [reading], 'total': [{'value': 100}],
+                                                      'countries': [{'_id': 'Guyana'}, {'_id': 'Perú'}]}])
+            response = self.api.get('/api/weather/overview?country=Perú&city=Lim&skip=48&limit=48')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {'data': [reading], 'total': 100, 'countries': ['Guyana', 'Perú']})
+            pipeline = collection.aggregate.call_args.args[0]
+            self.assertEqual(pipeline[1]['$group']['_id'], '$city_id')
+            self.assertEqual(pipeline[0]['$sort']['timestamp'], -1)
+            facet = pipeline[-1]['$facet']
+            self.assertEqual(facet['data'][0], {'$match': {'city_country': 'Perú', 'city_name': {'$regex': 'Lim', '$options': 'i'}}})
+            self.assertIn({'$skip': 48}, facet['data'])
+            self.assertEqual(facet['total'], [{'$match': {'city_country': 'Perú', 'city_name': {'$regex': 'Lim', '$options': 'i'}}}, {'$count': 'value'}])
+
+    def test_overview_empty_invalid_and_unavailable(self):
+        for url in ['/api/weather/overview?limit=0', '/api/weather/overview?skip=-1']:
+            self.assertEqual(self.api.get(url).status_code, 422)
+        with patch.object(main, 'collection') as collection:
+            collection.aggregate.return_value = iter([{'data': [], 'total': [], 'countries': []}])
+            self.assertEqual(self.api.get('/api/weather/overview').json(), {'data': [], 'total': 0, 'countries': []})
+            collection.aggregate.side_effect = ServerSelectionTimeoutError('offline')
+            self.assertEqual(self.api.get('/api/weather/overview').status_code, 503)
+
     def test_summary_consumes_ms2_and_weather(self):
         reading = {'city_id': 1, 'wind_speed_kmh': 10}
         with patch.object(main, 'urlopen', return_value=io.BytesIO(b'{"id":1,"name":"Lima"}')) as upstream:

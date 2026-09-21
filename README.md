@@ -73,3 +73,8 @@ Con ese comando, el puerto se especifica en la CLI; `python main.py` usa `.env`.
 
 `python -m pip install -r requirements-dev.txt` y `python -m unittest -v`.
 Las pruebas simulan MongoDB/MS2 para verificar errores y contratos sin datos externos.
+
+`GET /api/weather/overview?limit=48&skip=0&country=Per%C3%BA` devuelve la última
+lectura por localidad, `total` de localidades filtradas y `countries` de todo el
+catálogo meteorológico. La agrupación precede a la paginación; el listado histórico
+`/api/weather` permanece disponible. País procede de `city_country` en las lecturas.
