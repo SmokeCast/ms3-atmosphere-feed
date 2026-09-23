@@ -40,26 +40,26 @@ class WeatherTests(unittest.TestCase):
             self.assertFalse(response.json()['mongo_connected'])
         with patch.object(main, 'collection') as collection:
             collection.find_one.side_effect = ServerSelectionTimeoutError('offline')
-            self.assertEqual(self.api.get('/api/weather/latest?city_id=1').status_code, 503)
+            self.assertEqual(self.api.get('/api/v1/weather/latest?city_id=1').status_code, 503)
 
     def test_validates_ids_and_limits(self):
-        for url in ['/api/weather?limit=0', '/api/weather?skip=-1',
-                    '/api/weather/latest?city_id=0', '/api/weather/city/-1']:
+        for url in ['/api/v1/weather?size=0', '/api/v1/weather?page=-1',
+                    '/api/v1/weather/latest?city_id=0', '/api/v1/weather/city/-1']:
             self.assertEqual(self.api.get(url).status_code, 422, url)
 
     def test_empty_collection_and_missing_city(self):
         with patch.object(main, 'collection') as collection:
             collection.find.return_value.sort.return_value.skip.return_value.limit.return_value = []
-            self.assertEqual(self.api.get('/api/weather').json(), {'count': 0, 'data': []})
+            self.assertEqual(self.api.get('/api/v1/weather').json(), {'count': 0, 'data': []})
             collection.find_one.return_value = None
-            self.assertEqual(self.api.get('/api/weather/latest?city_id=1').status_code, 404)
+            self.assertEqual(self.api.get('/api/v1/weather/latest?city_id=1').status_code, 404)
 
     def test_overview_groups_before_filtering_and_paging(self):
         reading = {'city_id': 7, 'city_name': 'Lima', 'city_country': 'Perú'}
         with patch.object(main, 'collection') as collection:
             collection.aggregate.return_value = iter([{'data': [reading], 'total': [{'value': 100}],
                                                       'countries': [{'_id': 'Guyana'}, {'_id': 'Perú'}]}])
-            response = self.api.get('/api/weather/overview?country=Perú&city=Lim&skip=48&limit=48')
+            response = self.api.get('/api/v1/weather/overview?country=Perú&city=Lim&page=1&size=48')
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json(), {'data': [reading], 'total': 100, 'countries': ['Guyana', 'Perú']})
             pipeline = collection.aggregate.call_args.args[0]
@@ -71,29 +71,29 @@ class WeatherTests(unittest.TestCase):
             self.assertEqual(facet['total'], [{'$match': {'city_country': 'Perú', 'city_name': {'$regex': 'Lim', '$options': 'i'}}}, {'$count': 'value'}])
 
     def test_overview_empty_invalid_and_unavailable(self):
-        for url in ['/api/weather/overview?limit=0', '/api/weather/overview?skip=-1']:
+        for url in ['/api/v1/weather/overview?size=0', '/api/v1/weather/overview?page=-1']:
             self.assertEqual(self.api.get(url).status_code, 422)
         with patch.object(main, 'collection') as collection:
             collection.aggregate.return_value = iter([{'data': [], 'total': [], 'countries': []}])
-            self.assertEqual(self.api.get('/api/weather/overview').json(), {'data': [], 'total': 0, 'countries': []})
+            self.assertEqual(self.api.get('/api/v1/weather/overview').json(), {'data': [], 'total': 0, 'countries': []})
             collection.aggregate.side_effect = ServerSelectionTimeoutError('offline')
-            self.assertEqual(self.api.get('/api/weather/overview').status_code, 503)
+            self.assertEqual(self.api.get('/api/v1/weather/overview').status_code, 503)
 
     def test_summary_consumes_ms2_and_weather(self):
         reading = {'city_id': 1, 'wind_speed_kmh': 10}
         with patch.object(main, 'urlopen', return_value=io.BytesIO(b'{"id":1,"name":"Lima"}')) as upstream:
             with patch.object(main, 'collection') as collection:
                 collection.find_one.return_value = reading
-                response = self.api.get('/api/weather/city/1/summary')
+                response = self.api.get('/api/v1/weather/city/1/summary')
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json(), {'city': {'id': 1, 'name': 'Lima'}, 'weather': reading})
-                self.assertTrue(upstream.call_args.args[0].endswith('/api/cities/1'))
+                self.assertTrue(upstream.call_args.args[0].endswith('/api/v1/cities/1'))
 
     def test_summary_handles_missing_or_unavailable_ms2(self):
         for error, expected in [(HTTPError('url', 404, 'missing', {}, None), 404),
                                 (TimeoutError(), 502), (ValueError('invalid JSON'), 502)]:
             with patch.object(main, 'urlopen', side_effect=error):
-                self.assertEqual(self.api.get('/api/weather/city/1/summary').status_code, expected)
+                self.assertEqual(self.api.get('/api/v1/weather/city/1/summary').status_code, expected)
 
 
 if __name__ == '__main__':
